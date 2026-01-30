@@ -45,11 +45,13 @@ clusterImporter = 1
 logger = logging.getLogger(__name__)
 
 fx = "http://www.asam.net/xml/fbx"
+te = "http://www.technica-engineering.com/xml/fbx"
 ho = "http://www.asam.net/xml"
 can = "http://www.asam.net/xml/fbx/can"
 xsi = "http://www.w3.org/2001/XMLSchema-instance"
 ns_ho = "{%s}" % ho
 ns_fx = "{%s}" % fx
+ns_te = "{%s}" % te
 ns_can = "{%s}" % can
 ns_xsi = "{%s}" % xsi
 
@@ -70,6 +72,13 @@ def create_short_name_desc(parent, short_name, desc):
 def create_sub_element_fx(parent, element_name, element_text=None):
     # type: (_Element, str, typing.Optional[str]) -> _Element
     new = lxml.etree.SubElement(parent, ns_fx + element_name)
+    if element_text is not None:
+        new.text = element_text
+    return new
+
+def create_sub_element_te(parent, element_name, element_text=None):
+    # type: (_Element, str, typing.Optional[str]) -> _Element
+    new = lxml.etree.SubElement(parent, ns_te + element_name)
     if element_text is not None:
         new.text = element_text
     return new
@@ -212,6 +221,23 @@ def create_output_port(parent, frame, prefix=""):
     pdu_triggering_ref.set("ID-REF", f"{prefix}PDU_{frame.name}")
     
     return output_port
+
+def create_secoc_configuration(frame, auth_info_tx_length_def, freshness_value_tx_length_def, data_id_def, freshness_value_length_def, spdu):
+    auth_info_tx_length = int(frame.attribute("SCP_AuthInfoTxLength")) if frame.attribute("SCP_AuthInfoTxLength") is not None else int(auth_info_tx_length_def)
+    freshness_value_tx_length = int(frame.attribute("SCP_FreshnessValueTxLength")) if frame.attribute("SCP_FreshnessValueTxLength") is not None else int(freshness_value_tx_length_def)
+    secoc_pdu_length = frame.size + (auth_info_tx_length // 8) + (freshness_value_tx_length // 8)
+    create_sub_element_fx(spdu, "BYTE-LENGTH", str(secoc_pdu_length))
+    create_sub_element_fx(spdu, "PDU-TYPE", "OTHER")
+    manufac_extansion = create_sub_element_te(spdu, "MANUFACTURER-EXTENSION")
+    sec_props = create_sub_element_te(manufac_extansion, "SECURITY-PROPERTIES")
+    data_id = frame.attribute("SCP_DataId") if frame.attribute("SCP_DataId") else data_id_def
+    create_sub_element_te(sec_props, "DATA-ID", data_id)
+    create_sub_element_te(sec_props, "AUTH-INFO-TX-LENGTH", str(auth_info_tx_length))
+    freshness_value_length = frame.attribute("SCP_FreshnessValueLength") if frame.attribute("SCP_FreshnessValueLength") else freshness_value_length_def
+    create_sub_element_te(sec_props, "FRESHNESS-VALUE-LENGTH", str(freshness_value_length))
+    create_sub_element_te(sec_props, "FRESHNESS-VALUE-TX-LENGTH", str(freshness_value_tx_length))
+    payload_pdu = create_sub_element_te(sec_props, "PAYLOAD-REF")
+    payload_pdu.set("ID-REF", "PDU_" + frame.name)
 
 def get_base_data_type(signal):
     # type: (Signal) -> str
@@ -503,7 +529,7 @@ def load(f, **_options):
 
 def dump(db, f, **options):
     # type: (canmatrix.CanMatrix, typing.IO, **typing.Any) -> None
-    ns_map = {"fx": fx, "ho": ho, "can": can, "xsi": xsi}
+    ns_map = {"fx": fx, "ho": ho, "te": te, "can": can, "xsi": xsi}
     can_channel = 'CANCHANNEL01'
     db_name= db.attribute("DBName")
     if db_name:
@@ -661,6 +687,10 @@ def dump(db, f, **options):
     # PDUS
     #
     pdus = create_sub_element_fx(elements, "PDUS")
+    auth_info_tx_length_def = db.frame_defines["SCP_AuthInfoTxLength"].defaultValue
+    freshness_value_tx_length_def = db.frame_defines["SCP_FreshnessValueTxLength"].defaultValue
+    data_id_def = db.frame_defines["SCP_DataId"].defaultValue
+    freshness_value_length_def = db.frame_defines["SCP_FreshnessValueLength"].defaultValue
     for frame in db.frames:
         pdu = create_sub_element_fx(pdus, "PDU")
         pdu.set("ID", "PDU_" + frame.name)
@@ -795,6 +825,7 @@ def dump(db, f, **options):
                 spdu = create_sub_element_fx(pdus, "PDU")
                 spdu.set("ID", "SPDU_" + frame.name)
                 create_short_name_desc(spdu, "SPDU_" + frame.name, frame.comment)
+                create_secoc_configuration(frame, auth_info_tx_length_def, freshness_value_tx_length_def, data_id_def, freshness_value_length_def, spdu)
 
     # FRAMES
     #
